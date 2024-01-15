@@ -1,0 +1,85 @@
+name: Check scorecard and deploy
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: string
+      port_payload:
+        required: true
+        description: Port's payload, including details for who triggered the action and
+          general context (blueprint, run id, etc...)
+        type: string
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create a log message
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{fromJson(inputs.port_payload).context.runId}}
+          logMessage: 🏃‍♂️ Deploying service ${{fromJson(inputs.port_payload).context.entity}}
+      - name: Create a log message
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{fromJson(inputs.port_payload).context.runId}}
+          logMessage: 📝 Checking production readiness scorecard
+      - name: Get entity from Port
+        id: port-github-action
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          identifier: ${{fromJson(inputs.port_payload).context.entity}}
+          blueprint: ${{fromJson(inputs.port_payload).context.blueprint}}
+          operation: GET
+      - name: Get scorecard score
+        id: get-scorecard-score
+        run: |
+          echo "SCORE=$(echo '${{ steps.port-github-action.outputs.entity }}' | jq -r .scorecards.ProductionReadiness.level)" >> $GITHUB_OUTPUT
+      - name: Scorecard data debugging info
+        run: |
+          echo "Production Readiness score: ${{ steps.get-scorecard-score.outputs.SCORE }}"
+      - name: Create a log message
+        if: ${{ steps.get-scorecard-score.outputs.SCORE == 'basic' }}
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{fromJson(inputs.port_payload).context.runId}}
+          status: "FAILURE"
+          logMessage: 🛑 Service ${{fromJson(inputs.port_payload).context.entity}} is not production ready, stopping deployment
+      - name: Check lock status 🚧
+        if: ${{ steps.get-scorecard-score.outputs.SCORE == 'basic' }}
+        run: |
+          echo "Service ${{fromJson(inputs.port_payload).context.entity}} is not production ready, stopping deployment"
+          exit 1
+      - name: Create a log message
+        if: ${{ steps.get-scorecard-score.outputs.SCORE == 'basic' }}
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{fromJson(inputs.port_payload).context.runId}}
+          logMessage: 🟢 Service ${{fromJson(inputs.port_payload).context.entity}} is production ready, deploying...
+      - name: Update action run status
+        uses: port-labs/port-github-action@v1
+        with:
+          clientId: ${{ secrets.PORT_CLIENT_ID }}
+          clientSecret: ${{ secrets.PORT_CLIENT_SECRET }}
+          baseUrl: https://api.getport.io
+          operation: PATCH_RUN
+          runId: ${{fromJson(inputs.port_payload).context.runId}}
+          status: "SUCCESS"
+          logMessage: ✅ Service deployed!
